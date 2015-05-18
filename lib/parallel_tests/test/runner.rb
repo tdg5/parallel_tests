@@ -1,3 +1,5 @@
+require 'securerandom'
+require 'pry'
 require 'parallel_tests'
 
 module ParallelTests
@@ -72,7 +74,33 @@ module ParallelTests
           end.join(separator)
           cmd = "#{exports}#{separator}#{cmd}"
 
-          output = open("|#{cmd}", "r") { |output| capture_output(output, silence) }
+          if /ruby -Itest/ === cmd
+            env = env['TEST_ENV_NUMBER']
+            env = '0' if env == ''
+            begin
+              id = SecureRandom.hex
+              cmd_file = File.join(`pwd`.strip, 'tmp', 'parallel', "#{id}.sh")
+              script = [
+                '#!/bin/bash',
+                'echo "Press any key to begin"',
+                'read',
+                '[ -e /etc/profile.d/rvm.sh ] && source /etc/profile.d/rvm.sh',
+                '[ -e $HOME/.rvm/scripts/rvm ] && source $HOME/.rvm/scripts/rvm',
+                "echo 'TEST_ENV=#{env} TEST_SCRIPT=#{cmd_file}'",
+                cmd.sub(/ruby -Itest/, 'bundle exec ruby -Itest'),
+                'echo "Press any key to exit"',
+                'read',
+              ]
+              File.open(cmd_file, 'w') {|f| f.write(script.join("\n"))}
+              FileUtils.chmod('u+x', cmd_file)
+              puts "PARALLEL TEST: CMD: #{cmd}"
+              `tmux -L PARALLEL_TEST new-window -d #{cmd_file}`
+            rescue => e
+              binding.pry if env == '0'
+            end
+          else
+            output = open("|#{cmd}", "r") { |output| capture_output(output, silence) }
+          end
           exitstatus = $?.exitstatus
 
           {:stdout => output, :exit_status => exitstatus}
